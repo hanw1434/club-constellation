@@ -1,0 +1,27 @@
+name: Weekly data refresh
+on:
+  schedule:
+    - cron: "0 13 * * 1"   # Mondays 13:00 UTC
+  workflow_dispatch:
+permissions:
+  contents: read           # never commits; data changes only land after human review
+  issues: write
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Re-fetch public sources signed out and rebuild (runner copy only)
+        run: |
+          git show HEAD:data/orgs.json > "$RUNNER_TEMP/old_orgs.json"
+          bash scripts/refresh.sh
+      - name: Compare and check links
+        run: python3 -I scripts/check_refresh.py "$RUNNER_TEMP/old_orgs.json" data/orgs.json > "$RUNNER_TEMP/report.md"
+      - name: Open a review issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue create --title "Data refresh $(date -u +%F)" --body-file "$RUNNER_TEMP/report.md"

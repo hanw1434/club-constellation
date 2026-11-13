@@ -1,0 +1,31 @@
+[
+ {
+  "source_id": "aist",
+  "name": "AI Safety Team (AIST)",
+  "school": "Multiple schools",
+  "description": "A community of Harvard students doing technical and policy research on reducing catastrophic risks from advanced AI. Runs nine-week intro fellowships (Technical, Policy, and AI × Biorisk tracks) every semester and summer, meeting weekly in Harvard Square.",
+  "website_url": "https://aisafetyteam.org/",
+  "join_url": "https://aisafetyteam.org/join",
+  "join_instructions": "Apply to an intro fellowship; membership applications go to fellows after each fellowship. When applications are closed, the interest form on the Join page emails you when the next round opens.",
+  "eligibility": "Mostly Harvard undergraduate and graduate students and postdocs; some other Boston-area students",
+  "checked_at": "2026-11-13",
+  "field_sources": {
+   "description": "https://aisafetyteam.org/",
+   "website_url": "https://aisafetyteam.org/",
+   "join_url": "https://aisafetyteam.org/join",
+   "join_instructions": "https://aisafetyteam.org/join",
+   "eligibility": "https://aisafetyteam.org/join"
+  },
+  "legitimacy": {
+   "checked_at": "2026-11-13",
+   "public_website": "https://aisafetyteam.org/",
+   "run_by_harvard_students": "Site describes itself as Harvard students; Berkman Klein Center co-hosted an event series with the group",
+   "open_join_route": "https://aisafetyteam.org/join",
+   "evidence": [
+    "https://aisafetyteam.org/",
+    "https://cyber.harvard.edu/events/bkc-x-aisst-event-series-fall-2024"
+   ],
+   "note": "Former names HAIST / AISST; old domain haist.ai fails TLS (certificate does not match), aisst.ai redirects to aisafetyteam.org"
+  }
+ }
+]

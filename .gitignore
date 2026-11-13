@@ -1,0 +1,5 @@
+# Raw pages contain officer names and personal addresses; never commit or publish them.
+raw/
+# Per-source intermediates may hold addresses the build later drops as personal.
+data/sources/*.json
+__pycache__/

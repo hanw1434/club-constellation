@@ -1,0 +1,72 @@
+{
+ "islands": {
+  "Academic & professional": {
+   "x": 0.0,
+   "y": 0.0,
+   "r": 175.0
+  },
+  "Culture & identity": {
+   "x": 42.1,
+   "y": 349.8,
+   "r": 147.0
+  },
+  "Service": {
+   "x": -41.5,
+   "y": -321.3,
+   "r": 119.0
+  },
+  "Arts": {
+   "x": -308.3,
+   "y": 33.3,
+   "r": 105.0
+  },
+  "Sports": {
+   "x": 206.1,
+   "y": -259.3,
+   "r": 105.0
+  },
+  "Science & tech": {
+   "x": -253.6,
+   "y": -189.8,
+   "r": 91.0
+  },
+  "Offices & programs": {
+   "x": 330.8,
+   "y": -66.8,
+   "r": 91.0
+  },
+  "Politics & advocacy": {
+   "x": 309.0,
+   "y": 149.6,
+   "r": 91.0
+  },
+  "Faith": {
+   "x": -226.1,
+   "y": 279.6,
+   "r": 91.0
+  },
+  "Hobbies & social": {
+   "x": -427.6,
+   "y": 210.3,
+   "r": 77.0
+  },
+  "Media": {
+   "x": 308.8,
+   "y": 340.8,
+   "r": 63.0
+  }
+ },
+ "groups": [
+  "Arts",
+  "Culture & identity",
+  "Service",
+  "Academic & professional",
+  "Science & tech",
+  "Sports",
+  "Faith",
+  "Politics & advocacy",
+  "Media",
+  "Hobbies & social",
+  "Offices & programs"
+ ]
+}

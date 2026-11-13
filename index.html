@@ -48,7 +48,7 @@
       <nav class="crumbs" id="crumbs" aria-label="Map location"></nav>
       <details class="legend">
         <summary>How to read the map</summary>
-        <p>Each star is a club; each coloured glow is an interest area. Click an area (its name, glow or any star) to fly in, then click a cluster to zoom onto it, then a star to open that club. The chips above do the same, one area at a time.</p>
+        <p>Each star is a club; each coloured glow is an interest area. Click an area (its name, glow or any star) to fly in, then click a cluster to open it full-pane with every club named. Click a club's name or dot for details. The chips above pick an area, one at a time.</p>
         <p>Inside a cluster, lines join clubs whose descriptions are similar. Bigger, brighter stars have a description, a clear way to join and more related clubs. Size never reflects member counts or selectivity.</p>
         <p>Nearby clubs share interests; the map doesn't show shared members or formal affiliations.</p>
       </details>
@@ -61,6 +61,10 @@
            aria-label="Galaxy map of clubs grouped into interest areas. Tab to an area or sub-area name and press Enter to zoom in. The results list has the same clubs as text. Arrow keys pan, plus and minus zoom.">
         <g id="world"></g>
       </svg>
+      <section class="detail" id="detail" hidden aria-labelledby="detail-title">
+        <div class="detail-head"><h2 id="detail-title" tabindex="-1"></h2><p id="detail-sub"></p></div>
+        <div class="detail-body" id="detail-body"><svg class="detail-lines" id="detail-lines" aria-hidden="true"></svg></div>
+      </section>
       <div class="tip" id="tip" hidden></div>
     </section>
 

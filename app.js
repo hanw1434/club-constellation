@@ -170,19 +170,33 @@
   }
 
   function render() {
-    const vis = state.orgs.filter(listVisible);
     const q = state.q.trim();
-    let html = "", shown;
+    // The list mirrors the map: while a cluster view is open, the list shows that cluster in the
+    // same reading order. A search still covers the whole area (and dims the cluster's other stars).
+    const scope = !q && !detail.hidden ? clusterOf(state.focus) : null;
+    const vis = state.orgs.filter((o) => listVisible(o) && (!scope || (o.topic_group === scope.g && (!scope.t || o.theme === scope.t))));
+    let html = "", shown, res = null;
     if (q) {
-      const res = search(vis, q);
+      res = search(vis, q);
       shown = new Set(res.map((r) => r.o.id));
       state.tiers = new Map(res.map((r) => [r.o.id, r.tier]));
-      $("#count").textContent = res.length ? `${res.length} match “${q}”` : "";
-      html = res.length ? `<ol>${res.map((r) => rowHtml(r.o, r.why)).join("")}</ol>`
-        : `<p class="empty">No clubs match “${esc(q)}”. Try a broader interest such as “music”, “service” or “tech”.</p>`;
     } else {
       shown = new Set(vis.map((o) => o.id));
       state.tiers = new Map();
+    }
+    layoutDetail();  // place the cluster view first, so the list can follow its on-screen order
+    if (q) {
+      $("#count").textContent = res.length ? `${res.length} match “${q}”` : "";
+      html = res.length ? `<ol>${res.map((r) => rowHtml(r.o, r.why)).join("")}</ol>`
+        : `<p class="empty">No clubs match “${esc(q)}”. Try a broader interest such as “music”, “service” or “tech”.</p>`;
+    } else if (scope) {
+      const at = new Map(detailOrder.map((id, i) => [id, i]));
+      const rows = [...vis].sort((a, b) => (at.get(a.id) ?? 1e9) - (at.get(b.id) ?? 1e9));
+      const name = scope.t || scope.g;
+      $("#count").innerHTML = `${rows.length} clubs in ${esc(name)}, in the order shown on the map · `
+        + `<button type="button" class="link-btn" id="widen">Show all ${scope.t ? esc(scope.g) : "areas"}</button>`;
+      html = `<h2 class="group-h" style="--c:${color(scope.g)}"><span class="sw"></span>${esc(name)} <span>(${rows.length})</span></h2><ol>${rows.map((o) => rowHtml(o)).join("")}</ol>`;
+    } else {
       $("#count").textContent = state.area ? `${vis.length} organizations in ${state.area}` : `${vis.length} organizations, grouped by interest`;
       for (const g of state.groups) {
         const members = vis.filter((o) => o.topic_group === g);
@@ -251,16 +265,28 @@
     const o = state.byId.get(id);
     if (!o) return;
     state.selected = id;
-    state.focus = { group: o.topic_group, theme: o.theme || null };
+    // With the map on screen, the map moves to the club's cluster (and the list follows it).
+    // Without it (phone list tab) only the popup opens: map focus, area and list stay as they were.
+    const mapShown = $("#map-pane").offsetWidth > 0;
+    if (mapShown) {
+      state.focus = { group: o.topic_group, theme: o.theme || null };
+      if (state.area !== o.topic_group) { state.area = o.topic_group; drawChips(); }  // its area's chip lights up
+    }
     const card = $("#card");
     card.innerHTML = cardHtml(o);
     card.hidden = false;
     card.querySelector(".close").addEventListener("click", closeCard);
+    applyFocus();
+    const c = mapShown && clusterOf(state.focus);
+    if (c) {  // show the club inside its cluster view (this also narrows the list to that cluster)
+      if (!fromMap) animateTo(clusterBox(c));
+      showDetail();
+    } else if (mapShown) { if (!fromMap) centerOn(o); else onViewChange(); }
     document.querySelectorAll(".row[aria-current='true']").forEach((r) => r.setAttribute("aria-current", "false"));
     const row = document.querySelector(`.row[data-id="${CSS.escape(id)}"]`);
-    if (row) { row.setAttribute("aria-current", "true"); if (fromMap) row.scrollIntoView({ block: "nearest" }); }
-    applyFocus();
-    if (!fromMap) centerOn(o); else onViewChange();
+    if (row) { row.setAttribute("aria-current", "true"); row.scrollIntoView({ block: "nearest" }); }
+    // with a cluster view open, the popup docks over the list so the whole cluster stays visible
+    card.classList.toggle("dock-left", !detail.hidden);
     history.replaceState(null, "", "#" + encodeURIComponent(id));
     card.querySelector("#card-title").focus();
   }
@@ -271,9 +297,11 @@
     state.selected = null;
     applyFocus();
     onViewChange();
+    layoutDetail();  // stars slide back into the space the popup used
     history.replaceState(null, "", location.pathname + location.search);
+    const node = id && !detail.hidden && dbody.querySelector(`.node[data-id="${CSS.escape(id)}"]`);
     const row = id && document.querySelector(`.row[data-id="${CSS.escape(id)}"]`);
-    (row && row.offsetParent ? row : $("#q")).focus();
+    (node || (row && row.offsetParent ? row : $("#q"))).focus();
   }
 
   // ---------- galaxy map ----------
@@ -379,10 +407,13 @@
     svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
     onViewChange();
   }
-  let anim = 0;
-  function animateTo(target, ms = 650) {
+  let anim = 0, animFallback = 0;
+  function animateTo(target, ms = 650, done) {
     cancelAnimationFrame(anim);
-    if (REDUCED || document.hidden) return setView(target);
+    clearTimeout(animFallback);
+    if (REDUCED || document.hidden) { setView(target); if (done) done(); return; }
+    // if animation frames are throttled (background tab), still arrive and finish
+    animFallback = setTimeout(() => { cancelAnimationFrame(anim); setView(target); if (done) done(); }, ms + 300);
     const from = { ...view }, t0 = performance.now();
     const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
     const step = (now) => {
@@ -393,6 +424,7 @@
       const cy = from.y + from.h / 2 + (target.y + target.h / 2 - from.y - from.h / 2) * e;
       setView({ x: cx - w / 2, y: cy - h / 2, w, h });
       if (t < 1) anim = requestAnimationFrame(step);
+      else { clearTimeout(animFallback); if (done) done(); }
     };
     anim = requestAnimationFrame(step);
   }
@@ -422,19 +454,179 @@
     setArea(g);
     state.focus = { group: g, theme: null };
     applyFocus();
-    animateTo(box(L.islands[g], 1.2));
+    // an area without clusters is itself a cluster: open its full-pane view after the fly-in
+    animateTo(box(L.islands[g], 1.2), 650, showDetail);
   }
   function focusTheme(g, t) {
     setArea(g);
     state.focus = { group: g, theme: t };
     applyFocus();
-    animateTo(box(L.themes[g][t], 1.7));
+    animateTo(box(L.themes[g][t], 1.15), 650, showDetail);
   }
   function showGalaxy() {
     setArea(null);
     state.focus = null;
     applyFocus();
     animateTo({ ...bounds });
+  }
+  function upOneLevel() {
+    const f = state.focus;
+    if (f && f.theme) focusGroup(f.group); else showGalaxy();
+  }
+
+  // ---------- cluster view: the cluster fills the pane, every club named at a readable size ----------
+  const detail = $("#detail"), dbody = $("#detail-body"), dlines = $("#detail-lines");
+  let detailKey = null, detailOrder = [];  // detailOrder: club ids in on-screen reading order (the list follows it)
+  function clusterOf(f) {
+    if (!f || !L) return null;
+    if (f.theme) return { g: f.group, t: f.theme };
+    return hasThemes(f.group) ? null : { g: f.group, t: null };
+  }
+  const clusterBox = (c) => box(c.t ? L.themes[c.g][c.t] : L.islands[c.g], 1.15);
+  function showDetail() {
+    const c = clusterOf(state.focus);
+    if (!c) return hideDetail();
+    const key = c.g + "|" + (c.t || "");
+    const fresh = key !== detailKey;
+    detailKey = key;
+    detail.hidden = false;
+    detail.style.setProperty("--c", color(c.g));
+    svg.classList.add("behind");
+    scheduleNames();  // clears the map's own name labels behind the view
+    $("#detail-title").textContent = c.t || c.g;
+    if (fresh) { dbody.querySelectorAll(".node").forEach((n) => n.remove()); detail.scrollTop = 0; }
+    render();  // lays out the cluster view and narrows the list to the same clubs
+    const sel = state.selected && dbody.querySelector(`.node[data-id="${CSS.escape(state.selected)}"]`);
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+    else if (fresh) $("#detail-title").focus({ preventScroll: true });
+  }
+  function hideDetail() {
+    if (detail.hidden) return;
+    detailKey = null;
+    detail.hidden = true;
+    svg.classList.remove("behind");
+    $("#card").classList.remove("dock-left");
+    scheduleNames();
+    render();  // the list widens back to the area / all areas
+  }
+  function layoutDetail() {
+    const c = clusterOf(state.focus);
+    if (!c || detail.hidden) return;
+    const members = state.orgs.filter((o) => o.topic_group === c.g && (!c.t || o.theme === c.t) && visible(o));
+    $("#detail-sub").textContent = `${c.t ? c.g + " · " : ""}${members.length} clubs · lines join clubs with similar descriptions`;
+    const W = detail.clientWidth || 700, H = detail.clientHeight || 500;
+    // keep stars clear of the zoom buttons (the popup docks over the list, not over the cluster)
+    const usable = Math.max(240, W - (innerWidth > 860 ? 48 : 8));
+    const m = 16, top = 8, avail = Math.max(160, H - $(".detail-head").offsetHeight - 70);
+    const existing = new Map([...dbody.querySelectorAll(".node")].map((n) => [n.dataset.id, n]));
+    const keep = new Set(members.map((o) => o.id));
+    for (const [id, n] of existing) if (!keep.has(id)) n.remove();
+    const nodes = members.map((o) => {
+      let n = existing.get(o.id);
+      if (!n) {
+        n = document.createElement("button");
+        n.type = "button"; n.className = "node fresh"; n.dataset.id = o.id;
+        const d = Math.round(Math.max(8, o._r * 2.6));  // dot size follows star size
+        n.innerHTML = `<span class="dot" style="width:${d}px;height:${d}px"></span><span class="nm">${esc(o.name)}</span>`;
+        n.style.setProperty("--c", color(o.topic_group));
+        dbody.appendChild(n);
+      }
+      n.classList.toggle("dim", !!state.q && !state.tiers.has(o.id));
+      n.classList.toggle("sel", o.id === state.selected);
+      n.setAttribute("aria-current", o.id === state.selected ? "true" : "false");
+      return { o, n, w: n.offsetWidth, h: n.offsetHeight, d: n.firstChild.offsetWidth };
+    });
+    if (!nodes.length) { dlines.innerHTML = ""; dbody.style.height = "0px"; return; }
+    // keep the cluster's real shape, scaled to the pane, then push names apart until none overlap
+    const xs = members.map((o) => o.x), ys = members.map((o) => o.y);
+    const minX = Math.min(...xs), minY = Math.min(...ys);
+    const bw = Math.max(...xs) - minX || 1, bh = Math.max(...ys) - minY || 1;
+    const avgW = nodes.reduce((a, p) => a + p.w, 0) / nodes.length;
+    // small clusters fill the pane; big ones get the height their names need (then scroll)
+    const need = nodes.reduce((a, p) => a + (p.w + 8) * (p.h + 8), 0) * 1.5 / Math.max(200, usable - 2 * m);
+    const s = Math.min((usable - 2 * m - avgW) / bw, Math.max(avail, need) / bh, 8);
+    for (const p of nodes) {
+      p.tx = nodes.length === 1 ? (usable - p.w) / 2 : m + (p.o.x - minX) * s;
+      p.ty = top + (p.o.y - minY) * s;
+    }
+    if (nodes.length > 24) packRows(nodes, usable, m, top);
+    else placeNearest(nodes, usable, m, top);
+    finishDetail(nodes, usable, m);
+  }
+
+  // Big clusters: balanced columns. Clubs go in constellation order (top to bottom) to the shortest
+  // column near their left-right position, with a small stable offset so it still reads as a sky.
+  // O(n * columns), names never overlap.
+  function packRows(nodes, usable, m, top) {
+    const inner = usable - 2 * m, gap = 14;
+    const colW = Math.max(...nodes.map((p) => p.w));
+    const cols = Math.max(1, Math.floor((inner + gap) / (colW + gap)));
+    const spread = cols > 1 ? (inner - cols * colW) / (cols - 1) : 0;
+    const heights = new Array(cols).fill(top);
+    const seed = (p) => parseInt(p.o.id.replace(/\D/g, "").slice(-4) || "0", 10);
+    for (const p of [...nodes].sort((a, b) => a.ty - b.ty || a.tx - b.tx)) {
+      const want = Math.min(cols - 1, Math.max(0, Math.floor(((p.tx - m) / Math.max(1, inner)) * cols)));
+      let best = 0, score = Infinity;
+      for (let c = 0; c < cols; c++) {
+        const s = heights[c] + Math.abs(c - want) * 28;  // stay near its side of the constellation
+        if (s < score) { score = s; best = c; }
+      }
+      p.x = m + best * (colW + spread) + (seed(p) % 5) * Math.min(8, (colW - p.w) / 4);
+      p.y = heights[best] + (seed(p) % 4) * 3;
+      heights[best] = p.y + p.h + 12;
+    }
+  }
+
+  // Small clusters: each club takes the free spot nearest its place in the constellation,
+  // so the shape is kept and names can never overlap
+  function placeNearest(nodes, usable, m, top) {
+    const pad = 8, placed = [];
+    const free = (x, y, p) => !placed.some((q) => x < q.x + q.w + pad && q.x < x + p.w + pad && y < q.y + q.h + pad && q.y < y + p.h + pad);
+    for (const p of [...nodes].sort((a, b) => a.ty - b.ty || a.tx - b.tx)) {
+      const xmax = Math.max(m, usable - m - p.w);
+      const clampX = (x) => Math.max(m, Math.min(x, xmax)), clampY = (y) => Math.max(top, y);
+      let spot = null;
+      for (let r = 0; !spot; r += 6 + r * 0.04) {
+        const steps = r === 0 ? 1 : Math.min(48, Math.max(8, Math.round(r / 4)));
+        for (let k = 0; k < steps && !spot; k++) {
+          const a = (k / steps) * 2 * Math.PI;
+          const x = clampX(p.tx + r * Math.cos(a)), y = clampY(p.ty + r * Math.sin(a) * 0.7);
+          if (free(x, y, p)) spot = [x, y];
+        }
+      }
+      p.x = spot[0]; p.y = spot[1];
+      placed.push(p);
+    }
+  }
+
+  // Position the nodes, size the scroll area and draw links between related clubs in the cluster
+  function finishDetail(nodes, usable, m) {
+    for (const p of nodes) { p.x = Math.round(p.x); p.y = Math.round(p.y); }
+    // reading order: top to bottom in 28px bands, left to right within a band
+    detailOrder = [...nodes].sort((a, b) => Math.floor(a.y / 28) - Math.floor(b.y / 28) || a.x - b.x).map((p) => p.o.id);
+    let maxY = 0;
+    for (const p of nodes) {
+      p.n.style.transform = `translate(${p.x}px, ${p.y}px)`;
+      maxY = Math.max(maxY, p.y + p.h);
+      if (p.n.classList.contains("fresh")) setTimeout(() => p.n.classList.remove("fresh"), 60);
+    }
+    const height = Math.round(maxY + m + 44);  // room above the legend
+    dbody.style.height = height + "px";
+    const pos = new Map(nodes.map((p) => [p.o.id, { x: p.x + p.d / 2, y: p.y + p.h / 2 }]));
+    dlines.setAttribute("width", usable);
+    dlines.setAttribute("height", height);
+    let html = "";
+    for (const p of nodes) {
+      for (const b of p.o.links || []) {
+        const q = pos.get(b);
+        if (!q || p.o.id >= b) continue;
+        const a = pos.get(p.o.id);
+        const hot = state.selected === p.o.id || state.selected === b;
+        const dim = !!state.q && !(state.tiers.has(p.o.id) && state.tiers.has(b));
+        html += `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${q.x.toFixed(1)}" y2="${q.y.toFixed(1)}" class="${hot ? "hot" : ""}${dim ? " dim" : ""}"/>`;
+      }
+    }
+    dlines.innerHTML = html;
   }
   const hasThemes = (g) => !!(L.themes && L.themes[g] && Object.keys(L.themes[g]).length);
   // what a click on this star or glow does at the current zoom level: area -> cluster -> club
@@ -447,6 +639,7 @@
 
   function applyFocus() {
     const f = state.focus;
+    if (!clusterOf(f)) hideDetail();
     const near = new Set();
     const sel = state.selected && state.byId.get(state.selected);
     if (sel) { near.add(sel.id); (sel.links || []).forEach((b) => near.add(b)); }
@@ -537,7 +730,8 @@
   function drawNames() {
     layers.names.textContent = "";
     const k = unitsPerPx();
-    if (k > 0.85) return;  // only name stars once they are far enough apart to read
+    // only name stars once they are far enough apart to read, and not behind the cluster view
+    if (k > 0.85 || !detail.hidden) return;
     const inView = state.orgs.filter((o) => {
       const c = stars.get(o.id);
       return o.id !== state.selected && !c.classList.contains("hidden") && !c.classList.contains("dim") && !c.classList.contains("far")
@@ -595,7 +789,7 @@
   function wireMap() {
     let drag = null;
     svg.addEventListener("pointerdown", (e) => {
-      cancelAnimationFrame(anim);
+      cancelAnimationFrame(anim); clearTimeout(animFallback);
       drag = { x: e.clientX, y: e.clientY, view: { ...view }, ctm: svg.getScreenCTM(), moved: false, target: e.target };
       svg.setPointerCapture(e.pointerId);
     });
@@ -618,7 +812,7 @@
     svg.addEventListener("pointerleave", hideTip);
     svg.addEventListener("wheel", (e) => {
       e.preventDefault();
-      cancelAnimationFrame(anim);
+      cancelAnimationFrame(anim); clearTimeout(animFallback);
       const p = toWorld(e.clientX, e.clientY);
       zoom(Math.exp(e.deltaY * 0.0015), p.x, p.y);
     }, { passive: false });
@@ -635,7 +829,9 @@
       else if (e.key === "0") showGalaxy();
     });
     $("#zoom-in").onclick = () => zoom(0.7);
-    $("#zoom-out").onclick = () => zoom(1.4);
+    $("#zoom-out").onclick = () => (detail.hidden ? zoom(1.4) : upOneLevel());
+    // clicking a club's dot or name in the cluster view opens its popup
+    dbody.addEventListener("click", (e) => { const n = e.target.closest(".node"); if (n) select(n.dataset.id, { fromMap: true }); });
     $("#zoom-reset").onclick = showGalaxy;
     $("#crumbs").addEventListener("click", (e) => {
       const b = e.target.closest("[data-crumb]");
@@ -645,7 +841,8 @@
       else if (b.dataset.crumb === "group") focusGroup(f.group);
       else if (b.dataset.crumb === "theme") focusTheme(f.group, f.theme);
     });
-    new ResizeObserver(() => view && setView({ ...view })).observe($("#map-pane"));
+    // a resize can reflow the cluster view (and its reading order), or hide the map (phone list tab)
+    new ResizeObserver(() => { if (view) setView({ ...view }); if (!detail.hidden) render(); }).observe($("#map-pane"));
   }
   // A star or glow under the pointer -> what clicking it would do right now
   function targetAction(target) {
@@ -721,8 +918,14 @@
       drawChips(); render(); $("#q").focus();
     });
     $("#results").addEventListener("click", (e) => { const r = e.target.closest(".row"); if (r) select(r.dataset.id); });
+    $("#count").addEventListener("click", (e) => { if (e.target.id === "widen") upOneLevel(); });
     $("#card").addEventListener("click", (e) => { const r = e.target.closest("[data-rel]"); if (r) select(r.dataset.rel); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#card").hidden) closeCard(); });
+    // Esc closes the popup first, then steps out of the cluster view
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if (!$("#card").hidden) closeCard();
+      else if (!detail.hidden) upOneLevel();
+    });
     const setTab = (v) => {
       document.querySelector(".layout").dataset.view = v;
       $("#tab-list").setAttribute("aria-selected", v === "list");

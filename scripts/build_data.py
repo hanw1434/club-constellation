@@ -381,6 +381,8 @@ def theme_of(rec):
         return {"Offices": "Office"}.get(cat, cat)  # GSAS says "Offices", SOCO says "Office"
     if rec.get("official_category") == "PBHA":
         return "PBHA programs"
+    if rec.get("official_category") == "Specialty Interest Group":  # HMS: one per medical specialty
+        return "Medical specialties"
     for t in rec.get("tags", []):
         for name, tags in THEMES.get(g, []):
             if t in tags:
@@ -426,7 +428,7 @@ def relate(recs, k=3, min_sim=0.12):
                 links[a].add(b); links[b].add(a)
     return links
 
-LAYOUT_VERSION = 2
+LAYOUT_VERSION = 3  # 3: "Medical specialties" split out of Medicine & health
 STAR_GAP = 15  # minimum distance between stars, in map units
 
 def _rng(key):  # str hash() is salted per process; crc32 keeps layouts reproducible

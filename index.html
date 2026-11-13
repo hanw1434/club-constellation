@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Club Constellation</title>
   <meta name="description" content="Find Harvard student organizations by interest, and see how to join each one.">
+  <meta name="theme-color" content="#060818">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -43,14 +44,21 @@
     </section>
 
     <section class="map-pane" id="map-pane" aria-label="Constellation map" role="tabpanel">
-      <p class="map-note">Nearby clubs have similar interests; this does not show shared members or formal affiliations.</p>
+      <canvas id="sky" aria-hidden="true"></canvas>
+      <nav class="crumbs" id="crumbs" aria-label="Map location"></nav>
+      <details class="legend">
+        <summary>How to read the map</summary>
+        <p>Each star is a club. Glowing clusters are interest areas: select an area's name to fly in and see its sub-areas, then a sub-area to zoom closer.</p>
+        <p>Lines join clubs whose descriptions are similar. Bigger, brighter stars have a description, a clear way to join and more related clubs. Size never reflects member counts or selectivity.</p>
+        <p>Nearby clubs share interests; the map doesn't show shared members or formal affiliations.</p>
+      </details>
       <div class="map-controls">
         <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
         <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
         <button type="button" id="zoom-reset" aria-label="Show whole map">⤢</button>
       </div>
-      <svg id="map" tabindex="0" role="img"
-           aria-label="Map of clubs grouped into labelled interest islands. Use the results list for the same clubs as text. Arrow keys pan, plus and minus zoom.">
+      <svg id="map" tabindex="0" role="group"
+           aria-label="Galaxy map of clubs grouped into interest areas. Tab to an area or sub-area name and press Enter to zoom in. The results list has the same clubs as text. Arrow keys pan, plus and minus zoom.">
         <g id="world"></g>
       </svg>
       <div class="tip" id="tip" hidden></div>

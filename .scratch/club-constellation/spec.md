@@ -51,11 +51,16 @@ Topic groups: Arts, Culture & identity, Service, Academic & professional, Scienc
 - No query: list grouped by topic group, alphabetical within; no featured/popular section.
 - Chips combine as OR. "My school" filter. Never rank by size, officers or selectivity.
 
-## Map
+## Map (galaxy, revised 13 Nov 2026)
 
-- Category islands, one per topic group, labelled; within an island, clubs sharing tags sit closer. Positions computed once and stored; new clubs are appended.
-- SVG with zoom/pan, hover/focus labels; the ranked list is the accessible equivalent.
-- Caption: "Nearby clubs have similar interests; this does not show shared members or formal affiliations."
+- A galaxy: starfield background, a coloured nebula per interest area, clubs as stars. Areas sit on a jittered golden-angle spiral, so the layout looks scattered but stays ordered by area.
+- **Sub-areas** split big areas into clickable regions (e.g. Academic → Law & justice, Medicine & health, Business & finance, Humanities…). Assigned from a club's first matching tag, with school defaults (HLS → Law, HMS → Medicine, HBS → Business); sub-areas under 4 clubs fold into "Other …". Small areas (Faith, Hobbies, Media) have none.
+- **Relationships**: each club links to its 3 most similar clubs in the same area (TF-IDF over name, description and tags). Lines ("constellations") show once you zoom into an area; a selected club's links light up; its card lists "Related clubs".
+- **Navigation**: area and sub-area names are buttons that fly the view in; a breadcrumb ("All areas › Academic › Law & justice") flies back out. Club names appear when zoomed in, placed so they never overlap.
+- **Star size** = how actionable and connected a club is: description, a real join route, website, and number of related clubs. Owner left the metric open; member counts were rejected because only ~190 of 1,025 orgs publish them and the spec forbids implying popularity. During a search, better matches also grow.
+- Positions are stable from layout version 2 on (one-time reflow when the galaxy replaced the hex islands); new clubs settle in near their neighbours.
+- The ranked list stays the accessible equivalent; the legend ("How to read the map") explains geometry, lines and size.
+- Whole site uses a dark galaxy colour scheme; area colours live in `app.js` (`GROUP_COLOR`).
 - Mobile: "List | Map" tabs under the search bar, List first; card opens as a full-height sheet.
 
 ## Cards

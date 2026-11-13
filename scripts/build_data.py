@@ -10,7 +10,8 @@ are known, + hand-curated data/unlisted.json) and writes:
 Map positions are stable: a club keeps its slot forever; new clubs take the
 next free slot in their island.
 """
-import datetime, json, math, pathlib, re
+import datetime, json, math, pathlib, random, re, zlib
+from collections import Counter, defaultdict
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC, DATA = ROOT / "data" / "sources", ROOT / "data"
@@ -308,81 +309,275 @@ def acronym(name):
     words = [w for w in re.findall(r"[A-Za-z]+", name) if w.lower() not in {"of", "the", "and", "for", "at", "in", "on"}]
     return "".join(w[0] for w in words).upper() if len(words) >= 2 else None
 
-# --- stable layout ------------------------------------------------------------
-SPACING = 14
+# --- sub-areas, relationships and galaxy layout --------------------------------
+# Sub-areas split big interest areas (e.g. "Academic" spans law to medicine) into clickable regions.
+THEMES = {
+    "Academic & professional": [
+        ("Law & justice", {"law"}),
+        ("Business & finance", {"business", "finance", "economics", "careers"}),
+        ("Medicine & health", {"biology & medicine", "public health", "psychology"}),
+        ("Policy & world affairs", {"policy & government", "international affairs", "social justice"}),
+        ("Science & research", {"physics & math", "chemistry", "data science", "ai", "computer science", "engineering", "space", "energy & climate"}),
+        ("Humanities", {"history & philosophy", "writing & literature", "languages", "journalism & publishing"}),
+        ("Design & cities", {"architecture & cities", "visual arts & design"}),
+    ],
+    "Culture & identity": [
+        ("African & Black diaspora", {"african & caribbean", "black community"}),
+        ("East & Southeast Asian", {"asian & asian american"}),
+        ("South Asian", {"south asian"}),
+        ("Latin American", {"latin american"}),
+        ("Middle Eastern & North African", {"middle eastern & north african"}),
+        ("European", {"european"}),
+        ("Indigenous", {"indigenous"}),
+        ("Gender & sexuality", {"lgbtq+", "women & gender"}),
+        ("Shared experience", {"first-gen & low-income", "veterans & military", "disability"}),
+        ("Cultural performance", {"dance", "music", "a cappella & choir", "theater"}),
+    ],
+    "Service": [
+        ("Education & youth", {"tutoring & mentoring"}),
+        ("Health", {"public health", "biology & medicine"}),
+        ("Justice & advocacy", {"social justice"}),
+        ("Volunteering", {"volunteering"}),
+    ],
+    "Arts": [
+        ("Music & voice", {"a cappella & choir", "music"}),
+        ("Theater & comedy", {"theater", "comedy & improv"}),
+        ("Dance", {"dance"}),
+        ("Visual arts & film", {"visual arts & design", "film & photography"}),
+        ("Writing", {"writing & literature", "journalism & publishing"}),
+    ],
+    "Science & tech": [
+        ("Computing & AI", {"ai", "computer science", "data science"}),
+        ("Engineering & space", {"engineering", "robotics", "space"}),
+        ("Natural sciences", {"physics & math", "chemistry", "biology & medicine"}),
+        ("Climate & energy", {"energy & climate"}),
+    ],
+    "Sports": [
+        ("Team sports", {"team sports"}),
+        ("Racket sports", {"racket sports"}),
+        ("Combat sports", {"martial arts"}),
+        ("Endurance & fitness", {"fitness & endurance"}),
+        ("Outdoors", {"outdoors"}),
+    ],
+    "Politics & advocacy": [
+        ("Politics & government", {"policy & government"}),
+        ("Debate & law", {"debate & speech", "law"}),
+        ("Advocacy & justice", {"social justice", "women & gender", "lgbtq+"}),
+        ("World affairs", {"international affairs"}),
+    ],
+}
+THEME_FALLBACK = {"Academic & professional": "Other academic", "Culture & identity": "Other communities",
+                  "Service": "Other service", "Arts": "Other arts", "Science & tech": "Other science & tech",
+                  "Sports": "Other sports", "Politics & advocacy": "Other politics & advocacy",
+                  "Offices & programs": "Other offices"}
+SCHOOL_THEME = {"HLS": "Law & justice", "HMS / HSDM": "Medicine & health", "HBS": "Business & finance",
+                "GSAS": "Graduate departments"}
+MIN_THEME = 4
 
-def hex_slot(i):
-    """Slot i on a hexagonal spiral -> (x, y); consecutive slots are neighbours."""
-    if i == 0:
-        return 0.0, 0.0
-    k = 1
-    while 1 + 3 * k * (k + 1) <= i:
-        k += 1
-    j = i - (1 + 3 * (k - 1) * k)
-    dirs = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)]
-    q, r = -k, k  # start corner of ring k (axial coords); walking dirs in order traces the ring
-    side, step = divmod(j, k)
-    for s in range(side):
-        q += dirs[s][0] * k; r += dirs[s][1] * k
-    q += dirs[side][0] * step; r += dirs[side][1] * step
-    return SPACING * (q + r / 2), SPACING * (r * math.sqrt(3) / 2)
+def theme_of(rec):
+    g = rec["topic_group"]
+    if g == "Offices & programs":
+        cat = rec.get("official_category") or "Other offices"
+        return {"Offices": "Office"}.get(cat, cat)  # GSAS says "Offices", SOCO says "Office"
+    if rec.get("official_category") == "PBHA":
+        return "PBHA programs"
+    for t in rec.get("tags", []):
+        for name, tags in THEMES.get(g, []):
+            if t in tags:
+                return name
+    if g == "Academic & professional":
+        return SCHOOL_THEME.get(rec["school"], THEME_FALLBACK[g])
+    return THEME_FALLBACK.get(g)  # None: small areas have no sub-areas
 
-def island_radius(n):
-    k = 0
-    while 1 + 3 * k * (k + 1) < n * 1.25 + 6:  # headroom so new clubs fit without moving others
-        k += 1
-    return (k + 1.5) * SPACING
+GENERIC = set("""the and for with that this are our from their your will have has who all its was were been into about
+which also more than other they them these those such can may any each through out new one well help both while
+harvard college undergraduate undergrad university student students club clubs society association organization
+organizations group groups team committee community members member mission purpose aim provide providing
+school hms hls hbs gsas graduate year years annual event events program programs""".split())
+
+def _tokens(rec):
+    text = f"{rec['name']} {rec.get('description') or ''}".lower()
+    words = [w[:-1] if len(w) > 4 and w.endswith("s") else w for w in re.findall(r"[a-z]{3,}", text)]
+    return [w for w in words if w not in GENERIC] + [f"#{t}" for t in rec.get("tags", []) for _ in range(3)]
+
+def relate(recs, k=3, min_sim=0.12):
+    """Each club links to its k most similar clubs in the same interest area (TF-IDF cosine)."""
+    docs = {r["id"]: Counter(_tokens(r)) for r in recs}
+    df = Counter(t for c in docs.values() for t in c)
+    n = len(docs)
+    vec = {}
+    for i, c in docs.items():
+        v = {t: (1 + math.log(f)) * math.log(n / df[t]) for t, f in c.items() if df[t] > 1}
+        norm = math.sqrt(sum(x * x for x in v.values())) or 1.0
+        vec[i] = {t: x / norm for t, x in v.items()}
+    links = {r["id"]: set() for r in recs}
+    for g in GROUPS:
+        ids = [r["id"] for r in recs if r["topic_group"] == g]
+        for a in ids:
+            scores = []
+            for b in ids:
+                if a == b:
+                    continue
+                small, big = sorted((vec[a], vec[b]), key=len)
+                s = sum(x * big.get(t, 0.0) for t, x in small.items())
+                if s >= min_sim:
+                    scores.append((s, b))
+            for _, b in sorted(scores, reverse=True)[:k]:
+                links[a].add(b); links[b].add(a)
+    return links
+
+LAYOUT_VERSION = 2
+STAR_GAP = 15  # minimum distance between stars, in map units
+
+def _rng(key):  # str hash() is salted per process; crc32 keeps layouts reproducible
+    return random.Random(zlib.crc32(key.encode()))
+
+def _cluster_radius(n):
+    return STAR_GAP * 0.62 * math.sqrt(max(n, 1)) + 10
+
+def _pack(items, gap, seed):
+    """[(key, radius)] biggest first -> {key: (x, y)}: golden-angle spiral with jitter, never overlapping."""
+    rng, placed, out = _rng(seed), [], {}
+    for i, (key, rad) in enumerate(items):
+        a, d = i * 2.39996 + rng.uniform(-0.6, 0.6), 0.0
+        while True:
+            x, y = d * math.cos(a), d * math.sin(a)
+            if all(math.hypot(x - px, y - py) >= rad + pr + gap for px, py, pr in placed):
+                break
+            d += 4
+        placed.append((x, y, rad)); out[key] = (x, y)
+    return out
+
+def _relax(nodes, links, centers, fixed, iters=220, theme=None):
+    """Force layout for one area: stars repel inside STAR_GAP, linked stars attract, all drift to their sub-area."""
+    ids = list(nodes)
+    settle = 60  # final rounds: repulsion only, so no two stars end up on top of each other
+    for it in range(iters + settle):
+        cool = max(0.0, 1 - it / iters)
+        shaping = it < iters
+        move = {i: [0.0, 0.0] for i in ids}
+        grid = defaultdict(list)
+        for i in ids:
+            grid[(int(nodes[i][0] // STAR_GAP), int(nodes[i][1] // STAR_GAP))].append(i)
+        for i in ids:
+            x, y = nodes[i]
+            gx, gy = int(x // STAR_GAP), int(y // STAR_GAP)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for j in grid.get((gx + dx, gy + dy), ()):
+                        if j <= i:
+                            continue
+                        ddx, ddy = nodes[j][0] - x, nodes[j][1] - y
+                        d = math.hypot(ddx, ddy) or 0.01
+                        if d < STAR_GAP:
+                            push = (STAR_GAP - d) / d * 0.5
+                            move[i][0] -= ddx * push; move[i][1] -= ddy * push
+                            move[j][0] += ddx * push; move[j][1] += ddy * push
+        for a in (ids if shaping else ()):
+            for b in links.get(a, ()):
+                if b in nodes and a < b:
+                    ddx, ddy = nodes[b][0] - nodes[a][0], nodes[b][1] - nodes[a][1]
+                    d = math.hypot(ddx, ddy) or 0.01
+                    # links across sub-areas pull gently, so sub-areas stay visibly separate
+                    same = theme is None or theme.get(a) == theme.get(b)
+                    pull = (d - STAR_GAP * 1.6) / d * (0.03 if same else 0.004)
+                    move[a][0] += ddx * pull; move[a][1] += ddy * pull
+                    move[b][0] -= ddx * pull; move[b][1] -= ddy * pull
+        for i in ids:
+            if i in fixed:
+                continue
+            g = 0.045 if shaping else 0.0
+            mx = move[i][0] + (centers[i][0] - nodes[i][0]) * g
+            my = move[i][1] + (centers[i][1] - nodes[i][1]) * g
+            m, lim = math.hypot(mx, my), 6 * cool + (0.5 if shaping else 2.0)
+            if m > lim:
+                mx, my = mx / m * lim, my / m * lim
+            nodes[i][0] += mx; nodes[i][1] += my
 
 def layout(recs):
-    lf = DATA / "layout.json"
-    prev = json.loads(lf.read_text()) if lf.exists() else {"islands": {}}
-    old = {}
-    of = DATA / "orgs.json"
-    if of.exists():
-        old = {r["id"]: r for r in json.loads(of.read_text()) if "slot" in r}
-    islands = prev["islands"]
-    sizes = {g: sum(1 for r in recs if r["topic_group"] == g) for g in GROUPS}
-    placed = [(i["x"], i["y"], i["r"]) for i in islands.values()]
-    for g in sorted(GROUPS, key=lambda g: -sizes[g]):
-        if g in islands or not sizes[g]:
-            continue
-        rad = island_radius(sizes[g])
-        t = 0.0
-        while True:  # walk out along a spiral until the island fits
-            x, y = 9 * t * math.cos(t), 9 * t * math.sin(t)
-            if all(math.hypot(x - px, y - py) >= rad + pr + 30 for px, py, pr in placed):
-                break
-            t += 0.05
-        islands[g] = {"x": round(x, 1), "y": round(y, 1), "r": round(rad, 1)}
-        placed.append((x, y, rad))
-    for g in GROUPS:
-        members = [r for r in recs if r["topic_group"] == g]
-        used = set()
-        for r in members:  # keep existing slots
-            o = old.get(r["id"])
-            if o and o.get("topic_group") == g:
-                r["slot"] = o["slot"]; used.add(o["slot"])
-        order = sorted((r for r in members if "slot" not in r),
-                       key=lambda r: ([t for t, _ in TAGS].index(r["tags"][0]) if r["tags"] else 999, r["name"].lower()))
-        nxt = 0
-        for r in order:
-            while nxt in used:
-                nxt += 1
-            r["slot"] = nxt; used.add(nxt)
+    """Galaxy layout: interest areas scattered on a jittered spiral, sub-areas inside them, related clubs
+    pulled together. Stable: once placed, a club keeps its position; new clubs settle in around it."""
+    lf, of = DATA / "layout.json", DATA / "orgs.json"
+    prev = json.loads(lf.read_text()) if lf.exists() else {}
+    stable = prev.get("version") == LAYOUT_VERSION
+    old = {r["id"]: r for r in json.loads(of.read_text())} if stable and of.exists() else {}
+    links = relate(recs)
+    for r in recs:
+        r["links"] = sorted(links[r["id"]])
+    by_group = {g: [r for r in recs if r["topic_group"] == g] for g in GROUPS}
+    for g, members in by_group.items():
         for r in members:
-            dx, dy = hex_slot(r["slot"])
-            r["x"], r["y"] = round(islands[g]["x"] + dx, 1), round(islands[g]["y"] + dy, 1)
-    lf.write_text(json.dumps({"islands": islands, "groups": GROUPS}, indent=1))
+            r["theme"] = theme_of(r)
+        counts = Counter(r["theme"] for r in members)
+        for r in members:
+            if r["theme"] and counts[r["theme"]] < MIN_THEME:
+                r["theme"] = THEME_FALLBACK.get(g)
+        if len({r["theme"] for r in members}) < 2:
+            for r in members:
+                r["theme"] = None
+    # sub-area centres inside each area, then areas across the galaxy
+    rel, radius = {}, {}
+    for g, members in by_group.items():
+        if not members:
+            continue
+        tc = Counter(r["theme"] or "" for r in members)
+        items = [(t, _cluster_radius(n)) for t, n in tc.most_common()]
+        rel[g] = _pack(items, 42, "theme:" + g)
+        radius[g] = max(math.hypot(*rel[g][t]) + rr for t, rr in items) + 20
+    if stable:
+        centers = {g: (v["x"], v["y"]) for g, v in prev["islands"].items()}
+        new_groups = [(g, radius[g]) for g in GROUPS if g in radius and g not in centers]
+        for g, (x, y) in _pack([(g, prev["islands"][g]["r"]) for g in centers] + new_groups, 70, "galaxy").items():
+            centers.setdefault(g, (x, y))
+    else:
+        centers = _pack(sorted(((g, r) for g, r in radius.items()), key=lambda x: -x[1]), 70, "galaxy")
+    islands, themes = {}, {}
+    for g, members in by_group.items():
+        if not members:
+            continue
+        gx, gy = centers[g]
+        tcen = {t: (gx + x, gy + y) for t, (x, y) in rel[g].items()}
+        if stable:  # sub-area centres from the previous build keep new clubs near their neighbours
+            for t, v in prev.get("themes", {}).get(g, {}).items():
+                tcen[t] = (v["x"], v["y"])
+        nodes, pull, fixed = {}, {}, set()
+        for r in members:
+            cx, cy = tcen.get(r["theme"] or "", (gx, gy))
+            o = old.get(r["id"])
+            if o and o.get("topic_group") == g and "x" in o:
+                nodes[r["id"]] = [o["x"], o["y"]]; fixed.add(r["id"])
+            else:
+                rng = _rng(r["id"])
+                a, d = rng.uniform(0, 2 * math.pi), rng.uniform(0, _cluster_radius(4))
+                nodes[r["id"]] = [cx + d * math.cos(a), cy + d * math.sin(a)]
+            pull[r["id"]] = (cx, cy)
+        if len(fixed) < len(nodes):
+            _relax(nodes, links, pull, fixed, theme={r["id"]: r["theme"] for r in members})
+        for r in members:
+            r["x"], r["y"] = round(nodes[r["id"]][0], 1), round(nodes[r["id"]][1], 1)
+        def bounds(rs):
+            cx, cy = sum(r["x"] for r in rs) / len(rs), sum(r["y"] for r in rs) / len(rs)
+            return {"x": round(cx, 1), "y": round(cy, 1), "n": len(rs),
+                    "r": round(max(math.hypot(r["x"] - cx, r["y"] - cy) for r in rs) + 14, 1)}
+        islands[g] = bounds(members)
+        tg = defaultdict(list)
+        for r in members:
+            if r["theme"]:
+                tg[r["theme"]].append(r)
+        if tg:
+            themes[g] = {t: bounds(rs) for t, rs in tg.items()}
+    lf.write_text(json.dumps({"version": LAYOUT_VERSION, "groups": GROUPS, "islands": islands, "themes": themes}, indent=1))
 
 if __name__ == "__main__":
-    # self-check: hex spiral slots never collide
-    pts = {tuple(round(v, 3) for v in hex_slot(i)) for i in range(400)}
-    assert len(pts) == 400, "hex spiral produced overlapping slots"
     assert is_role_address("acs@mail.law.harvard.edu", "American Constitution Society (ACS)")
     assert not is_role_address("jane.doe@college.harvard.edu", "Harvard Robotics Club")
     assert not social_ok("https://twitter.com/ReadyEducation", "Harvard Undergraduate Consulting Group")
     recs, review = build()
-    from collections import Counter
+    # self-check: stars in one area never sit on top of each other
+    for g in GROUPS:
+        pts = [(r["x"], r["y"]) for r in recs if r["topic_group"] == g]
+        close = sum(1 for i in range(len(pts)) for j in range(i) if math.dist(pts[i], pts[j]) < STAR_GAP * 0.5)
+        assert close <= len(pts) * 0.02, f"{g}: {close} overlapping stars"
     print(len(recs), "records;", len(review), "review items")
     print(Counter(r["topic_group"] for r in recs))
     print(Counter(r["join_status"] for r in recs))

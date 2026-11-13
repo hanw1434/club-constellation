@@ -49,14 +49,14 @@ Topic groups: Arts, Culture & identity, Service, Academic & professional, Scienc
 - Tiers: exact name/acronym → description/tag match → synonym match. Ties alphabetical.
 - Show why each club matched.
 - No query: list grouped by topic group, alphabetical within; no featured/popular section.
-- Chips combine as OR. "My school" filter. Never rank by size, officers or selectivity.
+- Interest chips are single-select: one area at a time; selecting it filters the list and flies the map into that area; selecting it again returns to all areas. Selecting an area on the map lights its chip. "My school" filter. Never rank by size, officers or selectivity.
 
 ## Map (galaxy, revised 13 Nov 2026)
 
 - A galaxy: starfield background, a coloured nebula per interest area, clubs as stars. Areas sit on a jittered golden-angle spiral, so the layout looks scattered but stays ordered by area.
 - **Sub-areas** split big areas into clickable regions (e.g. Academic → Law & justice, Medicine & health, Business & finance, Humanities…). Assigned from a club's first matching tag, with school defaults (HLS → Law, HMS → Medicine, HBS → Business); sub-areas under 4 clubs fold into "Other …". Small areas (Faith, Hobbies, Media) have none.
-- **Relationships**: each club links to its 3 most similar clubs in the same area (TF-IDF over name, description and tags). Lines ("constellations") show once you zoom into an area; a selected club's links light up; its card lists "Related clubs".
-- **Navigation**: area and sub-area names are buttons that fly the view in; a breadcrumb ("All areas › Academic › Law & justice") flies back out. Club names appear when zoomed in, placed so they never overlap.
+- **Relationships**: each club links to its 3 most similar clubs in the same area (TF-IDF over name, description and tags). Lines ("constellations") appear only after clicking into a cluster, and only those touching it (areas without clusters show theirs once entered); a selected club's links light up; its card lists "Related clubs".
+- **Navigation is a drill-down**: at galaxy level, clicking an area (name, glow or any star) flies into it; inside an area, clicking a cluster (name, glow or any of its stars) zooms onto it; inside a cluster, clicking a star opens the club. A breadcrumb ("All areas › Academic › Law & justice") flies back out; hover hints say what a click will do. Club names appear when zoomed in, placed so they never overlap.
 - **Star size** = how actionable and connected a club is: description, a real join route, website, and number of related clubs. Owner left the metric open; member counts were rejected because only ~190 of 1,025 orgs publish them and the spec forbids implying popularity. During a search, better matches also grow.
 - Positions are stable from layout version 2 on (one-time reflow when the galaxy replaced the hex islands); new clubs settle in near their neighbours.
 - The ranked list stays the accessible equivalent; the legend ("How to read the map") explains geometry, lines and size.

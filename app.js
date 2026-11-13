@@ -59,7 +59,8 @@
   const safeUrl = (u) => (typeof u === "string" && /^(https?:\/\/|mailto:)/i.test(u.trim()) ? u.trim() : null);
   const hasWord = (field, term) => term.length >= 4 ? (" " + field).includes(" " + term) : (" " + field + " ").includes(" " + term + " ");
 
-  const state = { orgs: [], byId: new Map(), groups: [], q: "", chips: new Set(), school: "", offices: false,
+  // area: the one selected interest area (chip bar + list filter + map focus); null = all areas
+  const state = { orgs: [], byId: new Map(), groups: [], q: "", area: null, school: "", offices: false,
     selected: null, focus: null, tiers: new Map() };
   let L = null, view = null, bounds = null;
 
@@ -130,7 +131,9 @@
   }
 
   // ---------- filtering + list ----------
-  const groupShown = (g) => (g !== "Offices & programs" || state.offices) && (!state.chips.size || state.chips.has(g));
+  const groupShown = (g) => g !== "Offices & programs" || state.offices;
+  // the list narrows to the selected area; the map keeps other areas visible (dimmed) for context
+  const listVisible = (o) => visible(o) && (!state.area || o.topic_group === state.area);
   function visible(o) {
     if (!groupShown(o.topic_group)) return false;
     if (o.org_type === "office_program" && !state.offices) return false;
@@ -167,7 +170,7 @@
   }
 
   function render() {
-    const vis = state.orgs.filter(visible);
+    const vis = state.orgs.filter(listVisible);
     const q = state.q.trim();
     let html = "", shown;
     if (q) {
@@ -180,7 +183,7 @@
     } else {
       shown = new Set(vis.map((o) => o.id));
       state.tiers = new Map();
-      $("#count").textContent = `${vis.length} organizations, grouped by interest`;
+      $("#count").textContent = state.area ? `${vis.length} organizations in ${state.area}` : `${vis.length} organizations, grouped by interest`;
       for (const g of state.groups) {
         const members = vis.filter((o) => o.topic_group === g);
         if (!members.length) continue;
@@ -197,7 +200,7 @@
       ge.nebula.style.display = ge.label.style.display = on ? "" : "none";
       if (ge.lines) for (const ln of ge.lines.children) ln.classList.toggle("dim", !!q && !(shown.has(ln.dataset.a) && shown.has(ln.dataset.b)));
     }
-    $("#clear").hidden = !(q || state.chips.size || state.school || state.offices);
+    $("#clear").hidden = !(q || state.area || state.school || state.offices);
     onViewChange();
   }
 
@@ -312,11 +315,13 @@
       for (let k = 0; k < 3; k++) {
         const rx = isl.r * (1.05 + rnd() * 0.45), ry = isl.r * (0.7 + rnd() * 0.4);
         const dx = (rnd() - 0.5) * isl.r * 0.5, dy = (rnd() - 0.5) * isl.r * 0.5;
-        el("ellipse", { cx: isl.x + dx, cy: isl.y + dy, rx, ry, fill: `url(#neb-${i})`,
+        el("ellipse", { cx: isl.x + dx, cy: isl.y + dy, rx, ry, fill: `url(#neb-${i})`, "data-neb": "", "data-group": g,
           transform: `rotate(${Math.round(rnd() * 180)} ${isl.x + dx} ${isl.y + dy})` }, ng);
       }
       const themes = (L.themes || {})[g] || {};
-      for (const th of Object.values(themes)) el("circle", { cx: th.x, cy: th.y, r: th.r * 1.15, fill: `url(#neb-${i})`, class: "tneb" }, ng);
+      // each cluster's own glow is clickable too
+      for (const [t, th] of Object.entries(themes)) el("circle", { cx: th.x, cy: th.y, r: th.r * 1.15, fill: `url(#neb-${i})`, class: "tneb",
+        "data-neb": "", "data-group": g, "data-theme": t }, ng);
       // area label: a real button (keyboard and screen readers) that flies to the area
       const lg = el("g", { class: "glabel", role: "button", tabindex: "0", "data-group": g, style: `--c:${c}`,
         "aria-label": `${g}: ${isl.n} clubs. Zoom in` }, layers.groups);
@@ -405,20 +410,39 @@
     animateTo({ x: o.x - w / 2 + shift, y: o.y - h / 2, w, h });
   }
 
+  // One selected area at a time: the chip bar, the list filter and the map all follow it
+  function setArea(g) {
+    if (state.area === g) return;
+    state.area = g;
+    drawChips();
+    render();
+    $("#results-pane").scrollTop = 0;
+  }
   function focusGroup(g) {
+    setArea(g);
     state.focus = { group: g, theme: null };
     applyFocus();
     animateTo(box(L.islands[g], 1.2));
   }
   function focusTheme(g, t) {
+    setArea(g);
     state.focus = { group: g, theme: t };
     applyFocus();
     animateTo(box(L.themes[g][t], 1.7));
   }
   function showGalaxy() {
+    setArea(null);
     state.focus = null;
     applyFocus();
     animateTo({ ...bounds });
+  }
+  const hasThemes = (g) => !!(L.themes && L.themes[g] && Object.keys(L.themes[g]).length);
+  // what a click on this star or glow does at the current zoom level: area -> cluster -> club
+  function clickAction(o, g, t) {
+    const f = state.focus;
+    if (!f || f.group !== g) return { kind: "area", g };
+    if (hasThemes(g) && t && f.theme !== t) return { kind: "theme", g, t };
+    return o ? { kind: "club", o } : null;
   }
 
   function applyFocus() {
@@ -439,6 +463,7 @@
     for (const t of layers.themes.querySelectorAll(".tlabel")) t.classList.toggle("on", !!f && f.theme === t.dataset.theme && f.group === t.dataset.group);
     styleLines();
     crumbs();
+    onViewChange();  // links and cluster names follow the new focus right away, not only once the view moves
   }
 
   function crumbs() {
@@ -470,11 +495,14 @@
       ge.labelText.setAttribute("y", isl.y - isl.r - 6 * k);
       ge.labelText.setAttribute("font-size", gfs.toFixed(2));
       const inView = isl.x + isl.r > view.x && isl.x - isl.r < view.x + view.w && isl.y + isl.r > view.y && isl.y - isl.r < view.y + view.h;
-      // sub-areas and lines appear only once the area fills enough of the view to read them
+      // cluster names appear once the area fills enough of the view to read them;
+      // links appear only after you click into a cluster (or into an area that has no clusters)
       const close = view.w < isl.r * 7;
-      const active = groupShown(g) && close && ((state.focus && state.focus.group === g) || (deep && inView));
-      if (active) ensureLines(g);
-      if (ge.lines) ge.lines.style.display = active ? "" : "none";
+      const f = state.focus;
+      const active = groupShown(g) && close && ((f && f.group === g) || (deep && inView));
+      const linksOn = groupShown(g) && close && !!f && f.group === g && (!!f.theme || !hasThemes(g));
+      if (linksOn) ensureLines(g);
+      if (ge.lines) ge.lines.style.display = linksOn ? "" : "none";
       ge.themes.style.display = active ? "" : "none";
       for (const b of ge.themes.children) {
         const th = L.themes[g][b.dataset.theme], t = b.firstChild;
@@ -536,7 +564,8 @@
       if (!ge.lines) continue;
       for (const ln of ge.lines.children) {
         const a = state.byId.get(ln.dataset.a), b = state.byId.get(ln.dataset.b);
-        ln.classList.toggle("far", !!(f && f.theme) && a.theme !== f.theme && b.theme !== f.theme);
+        // inside a cluster, show only the links that touch it
+        ln.classList.toggle("off", !!(f && f.theme) && a.theme !== f.theme && b.theme !== f.theme);
       }
     }
   }
@@ -580,7 +609,7 @@
         return;
       }
       const t = e.target;
-      if (t.classList && t.classList.contains("star")) showTip(t, e); else hideTip();
+      showTip(t, e);
     });
     svg.addEventListener("pointerup", () => {
       if (drag && !drag.moved) activate(drag.target);
@@ -618,20 +647,35 @@
     });
     new ResizeObserver(() => view && setView({ ...view })).observe($("#map-pane"));
   }
+  // A star or glow under the pointer -> what clicking it would do right now
+  function targetAction(target) {
+    if (!target.closest) return null;
+    const star = target.closest(".star"), neb = target.closest("[data-neb]");
+    if (star) { const o = state.byId.get(star.dataset.id); return clickAction(o, o.topic_group, o.theme); }
+    if (neb) return clickAction(null, neb.dataset.group, neb.dataset.theme || null);
+    return null;
+  }
   function activate(target) {
-    const star = target.closest && target.closest(".star");
-    if (star) { select(star.dataset.id, { fromMap: true }); return true; }
-    const t = target.closest && target.closest(".tlabel");
+    if (!target.closest) return false;
+    const t = target.closest(".tlabel");
     if (t) { focusTheme(t.dataset.group, t.dataset.theme); return true; }
-    const g = target.closest && target.closest(".glabel");
+    const g = target.closest(".glabel");
     if (g) { focusGroup(g.dataset.group); return true; }
-    return false;
+    const a = targetAction(target);
+    if (!a) return false;
+    if (a.kind === "area") focusGroup(a.g);
+    else if (a.kind === "theme") focusTheme(a.g, a.t);
+    else select(a.o.id, { fromMap: true });
+    return true;
   }
   const tip = $("#tip");
-  function showTip(dot, e) {
-    const o = state.byId.get(dot.dataset.id);
+  function showTip(target, e) {
+    const a = targetAction(target);
+    if (!a) return hideTip();
     const r = $("#map-pane").getBoundingClientRect();
-    tip.innerHTML = `<strong>${esc(o.name)}</strong><span>${esc([o.theme || o.topic_group, statusLabel(o)].join(" · "))}</span>`;
+    if (a.kind === "area") tip.innerHTML = `<strong>${esc(a.g)}</strong><span>${L.islands[a.g].n} clubs · click to zoom in</span>`;
+    else if (a.kind === "theme") tip.innerHTML = `<strong>${esc(a.t)}</strong><span>${L.themes[a.g][a.t].n} clubs · click to zoom in</span>`;
+    else tip.innerHTML = `<strong>${esc(a.o.name)}</strong><span>${esc(statusLabel(a.o))} · click for details</span>`;
     tip.hidden = false;
     tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 280) + "px";
     tip.style.top = e.clientY - r.top + 14 + "px";
@@ -639,27 +683,27 @@
   function hideTip() { tip.hidden = true; }
 
   // ---------- controls ----------
+  function drawChips() {
+    $("#chips").innerHTML = state.groups.filter((g) => g !== "Offices & programs" || state.offices)
+      .map((g) => `<button type="button" class="chip" aria-pressed="${state.area === g}" data-g="${esc(g)}" style="--c:${color(g)}"><span class="sw"></span>${esc(g)}</button>`).join("");
+  }
   function buildControls() {
-    const chips = $("#chips");
-    const drawChips = () => {
-      chips.innerHTML = state.groups.filter((g) => g !== "Offices & programs" || state.offices)
-        .map((g) => `<button type="button" class="chip" aria-pressed="${state.chips.has(g)}" data-g="${esc(g)}" style="--c:${color(g)}"><span class="sw"></span>${esc(g)}</button>`).join("");
-    };
     drawChips();
-    chips.addEventListener("click", (e) => {
+    // a chip does what clicking its area on the map does; one at a time, click again for all areas
+    $("#chips").addEventListener("click", (e) => {
       const b = e.target.closest(".chip");
       if (!b) return;
       const g = b.dataset.g;
-      state.chips.has(g) ? state.chips.delete(g) : state.chips.add(g);
-      b.setAttribute("aria-pressed", state.chips.has(g));
-      render();
+      if (state.area === g) showGalaxy(); else focusGroup(g);
+      const again = document.querySelector(`.chip[data-g="${CSS.escape(g)}"]`);
+      if (again) again.focus();  // chips are redrawn; keep keyboard focus on the one pressed
     });
     const schools = [...new Set(state.orgs.map((o) => o.school))].sort((a, b) => (a === "Harvard College" ? -1 : b === "Harvard College" ? 1 : a.localeCompare(b)));
     $("#school").insertAdjacentHTML("beforeend", schools.map((s) => `<option>${esc(s)}</option>`).join(""));
     $("#school").addEventListener("change", (e) => { state.school = e.target.value; render(); });
     $("#offices").addEventListener("change", (e) => {
       state.offices = e.target.checked;
-      if (!state.offices) state.chips.delete("Offices & programs");
+      if (!state.offices && state.area === "Offices & programs") showGalaxy();
       drawChips(); render();
     });
     let t;
@@ -671,8 +715,10 @@
       if (first) first.focus();
     });
     $("#clear").addEventListener("click", () => {
-      state.q = ""; $("#q").value = ""; state.chips.clear(); state.school = ""; $("#school").value = "";
-      state.offices = false; $("#offices").checked = false; drawChips(); render(); $("#q").focus();
+      state.q = ""; $("#q").value = ""; state.school = ""; $("#school").value = "";
+      state.offices = false; $("#offices").checked = false;
+      if (state.area) showGalaxy();
+      drawChips(); render(); $("#q").focus();
     });
     $("#results").addEventListener("click", (e) => { const r = e.target.closest(".row"); if (r) select(r.dataset.id); });
     $("#card").addEventListener("click", (e) => { const r = e.target.closest("[data-rel]"); if (r) select(r.dataset.rel); });

@@ -550,7 +550,14 @@
       p.ty = top + (p.o.y - minY) * s;
     }
     if (nodes.length > 24) packRows(nodes, usable, m, top);
-    else placeNearest(nodes, usable, m, top);
+    else {
+      placeNearest(nodes, usable, m, top);
+      // small clusters sit in the middle of the pane (vertically too, when shorter than the screen)
+      const x0 = Math.min(...nodes.map((p) => p.x)), x1 = Math.max(...nodes.map((p) => p.x + p.w));
+      const y0 = Math.min(...nodes.map((p) => p.y)), y1 = Math.max(...nodes.map((p) => p.y + p.h));
+      const dx = (usable - (x1 - x0)) / 2 - x0, dy = top + Math.max(0, (avail - (y1 - y0)) / 2) - y0;
+      for (const p of nodes) { p.x += dx; p.y += dy; }
+    }
     finishDetail(nodes, usable, m);
   }
 
@@ -730,13 +737,16 @@
   function drawNames() {
     layers.names.textContent = "";
     const k = unitsPerPx();
-    // only name stars once they are far enough apart to read, and not behind the cluster view
-    if (k > 0.85 || !detail.hidden) return;
+    const f = state.focus;
+    // only name stars once they are far enough apart to read, never behind the cluster view, and
+    // not inside an area that has clusters: there the cluster names guide you in
+    if (k > 0.85 || !detail.hidden || (f && !f.theme && hasThemes(f.group))) return;
     const inView = state.orgs.filter((o) => {
       const c = stars.get(o.id);
       return o.id !== state.selected && !c.classList.contains("hidden") && !c.classList.contains("dim") && !c.classList.contains("far")
         && o.x > view.x && o.x < view.x + view.w && o.y > view.y && o.y < view.y + view.h;
     }).sort((a, b) => b._r - a._r);
+    if (inView.length > 25) return;  // too many in view to read: no names until you zoom closer
     // greedy placement: bigger stars get their name first; a name that would overlap another is skipped
     // (hover still shows it), so labels never pile up
     const placed = [], fs = 10.5 * k;
